@@ -135,7 +135,7 @@ define('forum/register', [
 				if (results.every(obj => obj.status === 'rejected')) {
 					showSuccess(usernameInput, username_notify, successIcon);
 				} else {
-					showError(usernameInput, username_notify, '[[error:username-taken]]');
+					showErrorWithSuggestions(usernameInput, username_notify, username);
 				}
 
 				callback();
@@ -202,6 +202,96 @@ define('forum/register', [
 				.removeClass('register-danger')
 				.addClass('register-success');
 			element.show();
+		});
+	}
+
+	async function generateUsernameSuggestions(baseUsername, count = 3) {
+		const suggestions = [];
+		const baseName = baseUsername.replace(/\d+$/, ''); // Remove trailing numbers
+
+		// Generate simple suggestions by appending numbers
+		for (let i = 1; i <= count + 10; i++) {
+			const suggestion = baseName + i;
+			if (await isUsernameAvailable(suggestion)) {
+				suggestions.push(suggestion);
+				if (suggestions.length === count) {
+					break;
+				}
+			}
+		}
+
+		// If not enough suggestions, try with underscores
+		if (suggestions.length < count) {
+			for (let i = 1; i <= count + 10; i++) {
+				const suggestion = baseName + '_' + i;
+				if (await isUsernameAvailable(suggestion)) {
+					suggestions.push(suggestion);
+					if (suggestions.length === count) {
+						break;
+					}
+				}
+			}
+		}
+
+		return suggestions;
+	}
+
+	async function isUsernameAvailable(username) {
+		const userslug = slugify(username);
+		
+		// Check username length requirements
+		if (username.length < ajaxify.data.minimumUsernameLength || 
+			userslug.length < ajaxify.data.minimumUsernameLength ||
+			username.length > ajaxify.data.maximumUsernameLength) {
+			return false;
+		}
+
+		// Check if valid username
+		if (!utils.isUserNameValid(username) || !userslug) {
+			return false;
+		}
+
+		try {
+			const results = await Promise.allSettled([
+				api.head(`/users/bySlug/${userslug}`, {}),
+				api.head(`/groups/${username}`, {}),
+			]);
+			return results.every(obj => obj.status === 'rejected');
+		} catch (err) {
+			return false;
+		}
+	}
+
+	function showErrorWithSuggestions(input, element, username) {
+		translator.translate('[[error:username-taken]]', function (msg) {
+			input.attr('aria-invalid', 'true');
+			element.html('<div>' + msg + '</div>');
+			element.parent()
+				.removeClass('register-success')
+				.addClass('register-danger');
+			element.show();
+		});
+		validationError = true;
+
+		// Generate and display suggestions
+		generateUsernameSuggestions(username).then((suggestions) => {
+			if (suggestions.length > 0) {
+				translator.translate('Try these alternatives:', function (suggestMsg) {
+					let suggestionsHtml = '<div style="margin-top: 8px;"><small>' + suggestMsg + '</small><br>';
+					suggestions.forEach((suggestion) => {
+						suggestionsHtml += '<span class="username-suggestion" style="cursor: pointer; color: #007bff; text-decoration: underline; margin-right: 10px; font-size: 0.9em;">' + suggestion + '</span>';
+					});
+					suggestionsHtml += '</div>';
+					element.append(suggestionsHtml);
+
+					// Add click handlers to suggestions
+					$('.username-suggestion').on('click', function () {
+						const suggestedUsername = $(this).text();
+						$('#username').val(suggestedUsername).trigger('blur');
+						$('#yourUsername').text(slugify(suggestedUsername));
+					});
+				});
+			}
 		});
 	}
 
